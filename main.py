@@ -31,7 +31,7 @@ IMAGE_FORMAT = "JPEG"
 # reset_thread.start()
 
 
-def generate_description(api_key, image, prompt, detail, max_tokens):
+def generate_description(api_key, image, prompt, detail, max_tokens, gpt_model_type):
     # rate_limiter.wait()  # wait if we have exhausted our token limit
     try:
         img = Image.fromarray(image) if isinstance(image, np.ndarray) else Image.open(image)
@@ -43,7 +43,7 @@ def generate_description(api_key, image, prompt, detail, max_tokens):
 
         client = OpenAI(api_key=api_key)
         payload = {
-            "model": "gpt-4-turbo",
+            "model": gpt_model_type,
             "messages": [{
                 "role": "user",
                 "content": [
@@ -59,8 +59,8 @@ def generate_description(api_key, image, prompt, detail, max_tokens):
 
         # API call is made, so incrementing the call counter
         # rate_limiter.add_call()
-
         return response.choices[0].message.content
+    
 
     except Exception as e:
         with open("error_log.txt", 'a') as log_file:
@@ -122,7 +122,7 @@ def get_folder_path(folder_path=''):
 is_processing = True
 
 
-def process_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt="", post_prompt="",
+def process_folder(api_key, folder_path, prompt, detail, max_tokens, gpt_model_type, pre_prompt="", post_prompt="",
                    progress=gr.Progress(), num_workers=4):
     global is_processing
     is_processing = True
@@ -146,11 +146,15 @@ def process_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt=
             print(f'File {txt_path} already exists. Skipping.')
             return  # Exit the function
 
-        description = generate_description(api_key, image_path, prompt, detail, max_tokens)
-
-        # If file doesn't exist, write to it
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write(pre_prompt + ", " + description + " " + post_prompt)
+        description = generate_description(api_key, image_path, prompt, detail, max_tokens, gpt_model_type)
+        
+        # Check if the description is invalid and don't write to file if it is.
+        if description.startswith("Sorry, I can't assist with that."):
+            print(f'Invalid description created by GPT Vision API. Skipping.')
+        else:
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(pre_prompt + "" + description + " " + post_prompt)
+                print(f'File {txt_path} created.')
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         for i, _ in enumerate(executor.map(process_file, file_list), 1):
@@ -163,13 +167,15 @@ def process_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt=
 
 
 with gr.Blocks() as app:
-    api_key_input = gr.Textbox(label="OpenAI API Key", placeholder="Enter your API key here", type="password",
+    with gr.Row():
+        api_key_input = gr.Textbox(label="OpenAI API Key", placeholder="Enter your API key here", type="password",
                                info="The OpenAI API is rate limited to 20 requests per second. A big dataset can take a long time to tag.")
+        gpt_model_input = gr.Dropdown(["gpt-4o-mini", "gpt-4o","gpt-4o-turbo"], label="GPT Model Type", info="Select the GPT Vision model to use for the caption generation.", value="gpt-4o-mini")    
     with gr.Tab("Prompt Engineering"):
         image_input = gr.Image(label="Upload Image")
         with gr.Row():
             prompt_input = gr.Textbox(scale=6, label="Prompt",
-                                      value="What’s in this image? Provide a description without filler text like: The image depicts...",
+                                      value="Use active voice to describe this image in detailed needed for an AI to recreate it exactly. Your description is not judging or labeling the image subjects, you are creating a concise visual description. Make assumptions when neccesary. Include details about everything in the image as if describing the it to a police sketch artist. To get you started here are some suggestions on details to include about each subject: full physical description, ethnicity, sex, gender, age, occupation, hair (style, color, texture), eye (size, shape, color), height, weight, body shape, mouth size, mouth shape, face, lip color, skin color, skin texture, shoulders, breasts, chest, feet, body, body type, waist, hips, body measurements, legs, arms, and hands. Include details about what they are wearing: style, color, textures, and patterns. You can include details about what each subject is doing, how they are positioned in relation to each other and to the viewer, describe the subject's attitude and mental state. Include details about the surroundings, landscape and background, image style, focus, and resolution. What time period is depicted in the image? When and where was image created? Describe the image appearance, for example was it was created using a specific f stop, ISO speed, camera type, film type, coloring process, the distance the camera or viewer is the camera from subject, did they use a specific lens or setting? Was it painted using a specific process or in the style of a famous painter or photographer? It is ok to guess at some of the information. Keep the description concise. Remove any unnecessary words. Do not include line breaks. Your description will be provided to an AI, do not include extraneous text like: 'The image depicts', 'a photo of', 'create a'.",
                                       interactive=True)
             detail_level = gr.Radio(["high", "low", "auto"], scale=2, label="Detail", value="auto")
             max_tokens_input = gr.Number(scale=0, value=300, label="Max Tokens")
@@ -179,7 +185,7 @@ with gr.Blocks() as app:
         clear_button = gr.Button("Clear")
         clear_button.click(clear_fields, inputs=[], outputs=[output, history_table])
 
-    with gr.Tab("GPT4-Vision Tagging"):
+    with gr.Tab("GPT4 Vision"):
         with gr.Row():
             folder_path_dataset = gr.Textbox(scale=8, label="Dataset Folder Path", placeholder="/home/user/dataset",
                                              interactive=True,
@@ -194,7 +200,7 @@ with gr.Blocks() as app:
             )
         with gr.Row():
             prompt_input_dataset = gr.Textbox(scale=6, label="Prompt",
-                                              value="What’s in this image? Provide a description without filler text like: The image depicts...",
+                                              value="Use active voice to describe this image in detailed needed for an AI to recreate it exactly. Your description is not judging or labeling the image subjects, you are creating a concise visual description. Make assumptions when neccesary. Include details about everything in the image as if describing the it to a police sketch artist. To get you started here are some suggestions on details to include about each subject: full physical description, ethnicity, sex, gender, age, occupation, hair (style, color, texture), eye (size, shape, color), height, weight, body shape, mouth size, mouth shape, face, lip color, skin color, skin texture, shoulders, breasts, chest, feet, body, body type, waist, hips, body measurements, legs, arms, and hands. Include details about what they are wearing: style, color, textures, and patterns. You can include details about what each subject is doing, how they are positioned in relation to each other and to the viewer, describe the subject's attitude and mental state. Include details about the surroundings, landscape and background, image style, focus, and resolution. What time period is depicted in the image? When and where was image created? Describe the image appearance, for example was it was created using a specific f stop, ISO speed, camera type, film type, coloring process, the distance the camera or viewer is the camera from subject, did they use a specific lens or setting? Was it painted using a specific process or in the style of a famous painter or photographer? It is ok to guess at some of the information. Keep the description concise. Remove any unnecessary words. Do not include line breaks. Your description will be provided to an AI, do not include extraneous text like: 'The image depicts', 'a photo of', 'create a'.",
                                               interactive=True)
             detail_level_dataset = gr.Radio(["high", "low", "auto"], scale=2, label="Detail", value="auto")
             max_tokens_input_dataset = gr.Number(scale=0, value=300, label="Max Tokens")
@@ -220,30 +226,36 @@ with gr.Blocks() as app:
     cancel_button.click(cancel_processing, inputs=[], outputs=[processing_results_output])
 
 
-    def on_click(api_key, image, prompt, detail, max_tokens):
+    def on_click(api_key, image, prompt, detail, max_tokens, gpt_model_type):
         if not api_key.strip():
             raise Warning("Please enter your OpenAI API key.")
 
         if image is None:
             raise Warning("Please upload an image.")
+        
+        if gpt_model_type is None:
+            raise Warning("Please select GPT vision model.")
 
-        description = generate_description(api_key, image, prompt, detail, max_tokens)
+        description = generate_description(api_key, image, prompt, detail, max_tokens, gpt_model_type)
         new_history = update_history(prompt, description)
         return description, new_history
 
 
-    submit_button.click(on_click, inputs=[api_key_input, image_input, prompt_input, detail_level, max_tokens_input],
+    submit_button.click(on_click, inputs=[api_key_input, image_input, prompt_input, detail_level, max_tokens_input, gpt_model_input],
                         outputs=[output, history_table])
 
 
-    def on_click_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt, post_prompt, worker_slider_local):
+    def on_click_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt, post_prompt, worker_slider_local, gpt_model_type):
         if not api_key.strip():
             raise Warning("Please enter your OpenAI API key.")
 
         if not folder_path.strip():
             raise Warning("Please enter the folder path.")
+        
+        if gpt_model_type is None:
+            raise Warning("Please select GPT vision model.")
 
-        result = process_folder(api_key, folder_path, prompt, detail, max_tokens, pre_prompt, post_prompt,
+        result = process_folder(api_key, folder_path, prompt, detail, max_tokens, gpt_model_type, pre_prompt, post_prompt,
                                 num_workers=worker_slider_local)
         return result
 
@@ -258,7 +270,8 @@ with gr.Blocks() as app:
             max_tokens_input_dataset,
             pre_prompt_input,
             post_prompt_input,
-            worker_slider
+            worker_slider,
+            gpt_model_input
         ],
         outputs=[processing_results_output]
     )
